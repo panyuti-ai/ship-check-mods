@@ -11,7 +11,7 @@ Tests ✓ | Types ↻ Stale | Build ○ Not run
 ## Features
 
 - **A status line above the prompt.** One short line per project: `Tests ✓ | Types ↻ Stale | Build ○ Not run`. It updates quietly and never pops up a notification.
-- **A detailed panel.** Run `/ship-check` to open **Ship Check**. For each check it shows the result, the time, the command, the project location, and why a result is stale.
+- **A detailed panel.** Press **Details** on the status line, or run `/ship-check`, to open **Ship Check**. For each check it shows the result, the time, the command, the project location, and why a result is stale.
 - **View output.** Each row has a **View output** button that shows a length-limited tail of the real tool output.
 - **Prepare checks.** Puts a request to re-run stale, failed, unknown or not-yet-run checks into the prompt box. Nothing is sent until you press Enter.
 - **Honest statuses.** Every check is in exactly one state:
@@ -135,8 +135,8 @@ Use a recent Claude desktop app. Ship Check was tested in the **Code** tab of th
 3. Enter `panyuti-ai/ship-check-mods` and confirm.
 4. Open the **Discover** tab, find **Ship Check**, and install it. It then appears under **Yours** with its switch turned on.
 5. **Wait a few minutes**, then open a **new session** in the **Code** tab. A session that was already open when you installed does not have it, and a new session can still miss it for the first minutes after the install.
-6. Type `/ship-check` and press Enter. The **Ship Check** panel opens on the right. Below the prompt you may also see an orange line, `/ship-check isn't a command here.` It is only a notice from the app: the panel still opens.
-7. Ask Claude to run your tests, a type check, or a build. The status line appears above the prompt, and the panel fills in.
+6. Ask Claude to run your tests, a type check, or a build. The status line appears above the prompt, with a **Details** button at its end. Press **Details** to open the **Ship Check** panel on the right.
+7. To open the panel before any check has run, type `/ship-check` and press Enter. Below the prompt you may then see an orange line, `/ship-check isn't a command here.` It is only a notice from the app, which does not know commands that a mod adds: the panel still opens.
 
 To turn it off or remove it later, use **Settings → Plugins → Yours**.
 

@@ -6,6 +6,9 @@ const PANE = { title: 'Ship Check', isFocused: true, bodyColumns: 100, placement
 
 type Sim = { head: string; dirty: Record<string, string>; broken?: boolean }
 
+// ids of the panes the mod asked to open
+const opened: string[] = []
+
 // A tiny fake world beneath the plugin: a Git repo at the session directory, and what Bash printed.
 function world(on: any, sim: Sim, cwd = CWD) {
   on('session.cwd', () => ({ value: cwd }))
@@ -28,6 +31,10 @@ function world(on: any, sim: Sim, cwd = CWD) {
   on('prompt.submit', (_$: any, e: any) => ({ text: e.text }))
   on('ui.render', () => ({ type: 'engine', ref: 1 }))
   on('ui.close', () => ({ value: undefined }))
+  on('ui.open', (_$: any, e: any) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
   on('command.register', () => ({ value: undefined }))
   on('session.start', (_$: any, e: any) => e)
 }
@@ -250,4 +257,17 @@ test('a command run by a tool Ship Check does not know is shown as Unknown, not 
   const pane = (await paneTexts($)).join('\n')
   expect(pane).toContain('FutureShell')
   expect(pane).toContain('cannot read results from')
+})
+
+test('the status line has a Details button that opens the panel, so no slash command is needed', async ($, on) => {
+  const sim: Sim = { head: 'a1', dirty: {} }
+  world(on, sim)
+  on('tool.call', () => bash())
+  await $.tool.call({ tool: 'Bash', command: 'npm test' })
+  const ui = await $.ui.mount({ plugin: 'ship-check', surface: 'desktop', component: 'AbovePrompt', props: STRIP })
+  const buttons = (await ui.findAll({ type: 'Button' })).map((b: any) => b.props.label)
+  expect(buttons).toEqual(['Details'])
+  opened.length = 0
+  await ui.press({ key: 'open' })
+  expect(opened).toEqual(['ship-check'])
 })

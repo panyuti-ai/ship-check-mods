@@ -15,8 +15,8 @@ function statusText(Text, status, key) {
 }
 
 // "Tests ✓ | Types ↻ Stale | Build ○ Not run"
-export function buildStrip(els, ledger, cwd, customKinds) {
-  const { Box, Text } = els
+export function buildStrip(els, ledger, cwd, customKinds, onOpen) {
+  const { Box, Text, Button } = els
   const items = kindSummary(ledger, cwd, customKinds)
   const children = []
   items.forEach((item, i) => {
@@ -29,6 +29,8 @@ export function buildStrip(els, ledger, cwd, customKinds) {
     parts.push(Text(markProps))
     children.push(Box({ key: 'k-' + item.kind, flexDirection: 'row', columnGap: 1, children: parts }))
   })
+  // A button, because some apps do not offer a command that a mod registers.
+  if (onOpen) children.push(Button({ key: 'open', label: 'Details', plain: true, onPress: onOpen }))
   return Box({ flexDirection: 'row', columnGap: 1, children })
 }
 

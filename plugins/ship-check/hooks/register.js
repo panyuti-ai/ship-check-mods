@@ -465,7 +465,8 @@ export function register(on, options) {
     if (!hasAnyRecord(ledger)) return next(e)
     const els = $.ui.resolve(e)
     const cwd = await sessionCwd($)
-    const strip = buildStrip(els, ledger, cwd, customKinds)
+    const openPanel = () => $.ui.open({ id: PANE_ID, title: 'Ship Check', focus: true, closeOnEscape: true })
+    const strip = buildStrip(els, ledger, cwd, customKinds, openPanel)
     // Other mods may draw here too. The band is one row tall, so sit side by side instead of stacking.
     const theirs = await next(e)
     if (!theirs) return strip
