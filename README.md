@@ -85,13 +85,13 @@ The stale reason names the kind of change: source files, configuration files (`t
 
 ## Requirements
 
-- **Claude Code 2.1.287 or later.** Mods are not supported on older versions. Check with `claude --version`.
+- **Claude Code 2.1.287 or later.** Mods are not supported on older versions. In the desktop app, update the app to the latest version; in the terminal, check with `claude --version`.
 - Git is optional but recommended; it makes change detection faster and more precise.
 - The terminal and the Desktop app can load mods, as long as the Claude Code version inside them is 2.1.287 or later (the Desktop app bundles its own copy).
 
 ## Settings
 
-Open `/plugin`, select **ship-check**, and choose **Configure**, or edit `pluginConfigs` in your settings file.
+Both settings are optional, and Ship Check works without them. To change them, open `/plugin` in a terminal session, select **ship-check**, and choose **Configure options**, or edit `pluginConfigs` in your settings file.
 
 - **Extra checks**: your own commands, one per entry, written as `kind=command`. The kind becomes the label in the status line.
   ```
@@ -126,15 +126,33 @@ cd plugins/ship-check && claude plugin test
 
 ## Install
 
+### In the Claude desktop app (no terminal)
+
+You need a Claude desktop app whose built-in Claude Code is **2.1.287 or later**, so update the app to the latest version first.
+
+1. Open **Settings** and choose **Plugins** (under *Customize*).
+2. Click **Add**, then **Add from a repository**.
+3. Enter `panyuti-ai/ship-check-mods` and confirm.
+4. Open the **Discover** tab, find **Ship Check**, and install it. Choose who it is for (just you, this project, or this repository only) when asked.
+5. Start a new session in the **Code** tab. After Claude runs a test, build, or type check, the status line appears above the prompt. Type `/ship-check` to open the panel.
+
+To turn it off or remove it later, use **Settings → Plugins → Yours**.
+
+### In the terminal
+
 ```
 /plugin marketplace add panyuti-ai/ship-check-mods
 /plugin install ship-check@ship-check-mods
 /reload-plugins
 ```
 
+The terminal and the desktop app's Code tab read the same plugin settings on one computer, so a plugin installed in one is available in the other.
+
 ## Update
 
-`marketplace update` takes the marketplace's **name** (`ship-check-mods`), not the GitHub path, so these commands are the same for everyone:
+**Desktop app:** open **Settings → Plugins → Yours** and use the menu (⋮) next to Ship Check or its marketplace to update. The menu wording can differ between app versions. Start a new session afterwards, because a running session keeps the version it loaded.
+
+**Terminal:** `marketplace update` takes the marketplace's **name** (`ship-check-mods`), not the GitHub path, so these commands are the same for everyone:
 
 ```
 /plugin marketplace update ship-check-mods
