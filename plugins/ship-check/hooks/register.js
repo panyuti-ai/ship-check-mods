@@ -3,7 +3,8 @@
 // reported, and marks a result Stale when the project changes after it. See the README.
 
 import { atom, read, update } from 'claude-code'
-import { analyzeCommand, parseCustomChecks } from './lib/commands.js'
+import { parseCustomChecks } from './lib/commands.js'
+import { analyzeCommand } from './lib/analyze.js'
 import { normalizePath, isUnder, relativeTo, resolveDir } from './lib/paths.js'
 import {
   emptyLedger,
@@ -196,9 +197,14 @@ async function scanActive($, extra, force) {
 
 // --- Tool calls ------------------------------------------------------------------------------------
 
-// Claude Code uses the Bash tool or, on Windows with PowerShell, the PowerShell tool.
-function isShellTool(e) {
-  return e.tool === 'Bash' || e.tool === 'PowerShell'
+// Claude Code runs commands with the Bash tool or, on Windows, the PowerShell tool. Their results
+// are understood. Any other tool that takes a "command" (a future shell tool, an MCP terminal) is
+// "untrusted": a check seen there is shown as Unknown with the reason, never silently ignored.
+const FILE_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']
+function shellKind(e) {
+  if (e.tool === 'Bash' || e.tool === 'PowerShell') return 'trusted'
+  if (typeof e.command === 'string' && !FILE_TOOLS.includes(e.tool)) return 'untrusted'
+  return null
 }
 
 async function sessionCwd($) {
@@ -210,10 +216,12 @@ async function sessionCwd($) {
 }
 
 async function beginTool($, e, custom, extra) {
-  if (!isShellTool(e) || typeof e.command !== 'string') return null
+  const kind = shellKind(e)
+  if (!kind || typeof e.command !== 'string') return null
   const cwd = await sessionCwd($)
   const parsed = analyzeCommand(e.command, cwd, custom, { powershell: e.tool === 'PowerShell' })
-  const ctx = { cwd, parsed, checks: [] }
+  if (kind === 'untrusted') parsed.untrustedTool = e.tool
+  const ctx = { cwd, parsed, checks: [], trusted: kind === 'trusted' }
   if (!parsed.checks.length) return ctx
 
   const before = await read($, ledgerAtom)
@@ -255,7 +263,7 @@ async function endTool($, e, ctx, result, extra) {
     await update($, ledgerAtom, (value) => applyEdit(value, path, Date.now(), extra))
     return
   }
-  if (!isShellTool(e) || !ctx) return
+  if (!shellKind(e) || !ctx) return
 
   const denied = !result || typeof result.deny === 'string'
   if (ctx.checks.length) {
@@ -298,8 +306,9 @@ async function endTool($, e, ctx, result, extra) {
     return
   }
 
-  // A Bash command that is not a check: it may have edited files.
-  if (denied) return
+  // A shell command that is not a check: it may have edited files. Only the tools we understand
+  // tell us anything about that.
+  if (denied || !ctx.trusted) return
   const r = result.result && typeof result.result === 'object' ? result.result : null
   const diff = r && r.bashEditDiff
   const changed = diff && Array.isArray(diff.changedFiles) ? diff.changedFiles.slice(0, 200) : []

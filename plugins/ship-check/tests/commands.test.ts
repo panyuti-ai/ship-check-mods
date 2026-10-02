@@ -1,12 +1,30 @@
 import { expect, test } from 'claude-code/testing'
-import { analyzeCommand, parseCustomChecks, tokenizeChain } from '../hooks/lib/commands.js'
+import { parseCustomChecks, tokenizeChain } from '../hooks/lib/commands.js'
+import { analyzeCommand } from '../hooks/lib/analyze.js'
 import { classifyOutcome, applyEdit, beginRecord, finishRecord, emptyLedger, isTrackedPath, displayStatus, staleReasonFor, settleRunning } from '../hooks/lib/model.js'
 import { normalizePath, resolveDir } from '../hooks/lib/paths.js'
 
 const CWD = 'c:/work/app'
 
-function kinds(cmd: string, custom = []) {
-  return analyzeCommand(cmd, CWD, custom).checks.map((c: any) => c.kind + '@' + c.location + (c.scope ? '#' + c.scope : ''))
+function analyze(cmd: string, options: any = {}, custom: any[] = []) {
+  return analyzeCommand(cmd, CWD, custom, options)
+}
+
+function kinds(cmd: string, options: any = {}, custom: any[] = []) {
+  return analyze(cmd, options, custom).checks.map((c: any) => c.kind + '@' + c.location + (c.scope ? '#' + c.scope : ''))
+}
+
+// What the tools really return (measured in real sessions).
+const OK = (stdout = '1 passed') => ({ result: { stdout, stderr: '', interrupted: false } })
+const FAIL = (code = 2, more = 'boom') => {
+  const text = 'Exit code ' + code + '\n' + more
+  return { result: 'Error: ' + text, isError: true, text }
+}
+
+// Runs one command through the analysis and classifies the first check against an outcome.
+function verdict(cmd: string, outcome: any, options: any = {}, which = 0) {
+  const parsed = analyze(cmd, options)
+  return classifyOutcome(parsed, parsed.checks[which], outcome)
 }
 
 test('recognizes npm, pnpm, yarn and bun check commands', () => {
@@ -29,6 +47,7 @@ test('ignores commands that are not checks', () => {
   expect(kinds('git status')).toEqual([])
   expect(kinds('npm run dev')).toEqual([])
   expect(kinds('ls -la')).toEqual([])
+  expect(kinds('$out = Get-Content x', { powershell: true })).toEqual([])
 })
 
 test('follows cd and package-manager directory flags into separate locations', () => {
@@ -38,11 +57,12 @@ test('follows cd and package-manager directory flags into separate locations', (
   expect(kinds('yarn --cwd packages/d test')).toEqual(['test@c:/work/app/packages/d'])
   expect(kinds('npm test -w web')).toEqual(['test@c:/work/app#web'])
   expect(kinds('pnpm --filter api test')).toEqual(['test@c:/work/app#api'])
+  expect(kinds('Set-Location pkg; npm test', { powershell: true })).toEqual(['test@c:/work/app/pkg'])
+  expect(kinds('cd pkg; npm test')).toEqual(['test@c:/work/app/pkg'])
 })
 
-test('treats pipes, semicolons and background jobs as compound', () => {
+test('tokenizeChain still marks compound forms', () => {
   expect(tokenizeChain('npm test | tail -5').simple).toBe(false)
-  expect(tokenizeChain('npm test; echo done').simple).toBe(false)
   expect(tokenizeChain('npm test || true').simple).toBe(false)
   expect(tokenizeChain('npm test &').simple).toBe(false)
   expect(tokenizeChain('npm test 2>&1').simple).toBe(true)
@@ -51,10 +71,10 @@ test('treats pipes, semicolons and background jobs as compound', () => {
 })
 
 test('detects watch mode', () => {
-  expect(analyzeCommand('npm test -- --watch', CWD, []).hasWatch).toBe(true)
-  expect(analyzeCommand('npx vitest', CWD, []).hasWatch).toBe(true)
-  expect(analyzeCommand('npx vitest run', CWD, []).hasWatch).toBe(false)
-  expect(analyzeCommand('npm test', CWD, []).hasWatch).toBe(false)
+  expect(analyze('npm test -- --watch').hasWatch).toBe(true)
+  expect(analyze('npx vitest').hasWatch).toBe(true)
+  expect(analyze('npx vitest run').hasWatch).toBe(false)
+  expect(verdict('npm test -- --watch', OK()).status).toBe('unknown')
 })
 
 test('reads custom checks from configuration', () => {
@@ -63,8 +83,8 @@ test('reads custom checks from configuration', () => {
     { kind: 'lint', command: 'npm run lint' },
     { kind: 'make', command: 'make check' },
   ])
-  expect(kinds('npm run lint', custom)).toEqual(['lint@c:/work/app'])
-  expect(kinds('make check', custom)).toEqual(['make@c:/work/app'])
+  expect(kinds('npm run lint', {}, custom)).toEqual(['lint@c:/work/app'])
+  expect(kinds('make check', {}, custom)).toEqual(['make@c:/work/app'])
 })
 
 test('normalizes Windows and Git Bash spellings to one path', () => {
@@ -74,35 +94,132 @@ test('normalizes Windows and Git Bash spellings to one path', () => {
   expect(resolveDir('c:/work/app', '~/x')).toBe(null)
 })
 
-function outcome(over: any = {}) {
-  return { result: { stdout: 'ok', stderr: '', interrupted: false }, ...over }
-}
+// --- Bash -------------------------------------------------------------------------------------------
 
-test('only a reliable tool result becomes Passed or Failed', () => {
-  const parsed = analyzeCommand('npm test', CWD, [])
-  const check = parsed.checks[0]
-  expect(classifyOutcome(parsed, check, outcome()).status).toBe('passed')
-  expect(classifyOutcome(parsed, check, outcome({ isError: true, text: 'Exit code 1\nboom' }))).toMatchObject({ status: 'failed', exitCode: 1 })
-  // no result, no status flags, background, interruption, compound: all Unknown
-  expect(classifyOutcome(parsed, check, { isError: true, text: 'Error: something odd', result: 'Error: something odd' }).status).toBe('unknown')
-  expect(classifyOutcome(parsed, check, undefined).status).toBe('unknown')
-  expect(classifyOutcome(parsed, check, { result: {} }).status).toBe('unknown')
-  expect(classifyOutcome(parsed, check, outcome({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } })).status).toBe('unknown')
-  expect(classifyOutcome(parsed, check, outcome({ result: { stdout: '', stderr: '', interrupted: true } })).status).toBe('unknown')
-  expect(classifyOutcome(parsed, check, outcome({ result: { stdout: '', stderr: '', interrupted: false, timedOutAfterMs: 5000 } })).status).toBe('unknown')
-  const piped = analyzeCommand('npm test | tail -5', CWD, [])
-  expect(classifyOutcome(piped, piped.checks[0], outcome()).status).toBe('unknown')
-  const watch = analyzeCommand('npm test -- --watch', CWD, [])
-  expect(classifyOutcome(watch, watch.checks[0], outcome()).status).toBe('unknown')
+test('Bash: only a reliable tool result becomes Passed or Failed', () => {
+  expect(verdict('npm test', OK()).status).toBe('passed')
+  expect(verdict('npm test', FAIL(1))).toMatchObject({ status: 'failed', exitCode: 1 })
+  expect(verdict('npm test', undefined).status).toBe('unknown')
+  expect(verdict('npm test', { result: {} }).status).toBe('unknown')
+  expect(verdict('npm test', { isError: true, text: 'Error: something odd', result: 'Error: something odd' }).status).toBe('unknown')
+  expect(verdict('npm test', { result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' } }).status).toBe('unknown')
+  expect(verdict('npm test', { result: { stdout: '', stderr: '', interrupted: true } }).status).toBe('unknown')
+  expect(verdict('npm test', { result: { stdout: '', stderr: '', interrupted: false, timedOutAfterMs: 5000 } }).status).toBe('unknown')
 })
 
-test('a failure inside an && chain is only attributed when the check is the last command', () => {
-  const last = analyzeCommand('cd app && npm test', CWD, [])
-  expect(classifyOutcome(last, last.checks[0], outcome({ isError: true, text: 'Exit code 1' })).status).toBe('failed')
-  const first = analyzeCommand('npm test && npm run build', CWD, [])
-  expect(classifyOutcome(first, first.checks[0], outcome({ isError: true, text: 'Exit code 1' })).status).toBe('unknown')
-  expect(classifyOutcome(first, first.checks[0], outcome()).status).toBe('passed')
+test('Bash: pipes, ||, background jobs and later commands hide the real exit status', () => {
+  expect(verdict('npm test | tail -5', OK()).status).toBe('unknown')
+  expect(verdict('npm test || true', OK()).status).toBe('unknown')
+  expect(verdict('npm test &', OK()).status).toBe('unknown')
+  expect(verdict('npm test; echo done', OK()).status).toBe('unknown')
+  expect(verdict('npm test; npm run build', OK(), {}, 0).status).toBe('unknown')
+  // the last command in a ; list decides the status, so it is trusted
+  expect(verdict('npm test; npm run build', OK(), {}, 1).status).toBe('passed')
+  expect(verdict('npm test; npm run typecheck', FAIL(2), {}, 1)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('cd app; npm test', FAIL(1))).toMatchObject({ status: 'failed', exitCode: 1 })
 })
+
+test('Bash: a failure in an && chain is only blamed on the check when nothing but cd came before it', () => {
+  expect(verdict('cd app && npm test', FAIL(1))).toMatchObject({ status: 'failed', exitCode: 1 })
+  expect(verdict('npm test && npm run build', FAIL(1), {}, 0).status).toBe('unknown')
+  expect(verdict('npm test && npm run build', OK(), {}, 0).status).toBe('passed')
+  // a failed earlier command must not be reported as a failed check that never ran
+  expect(verdict('git pull && npm test', FAIL(1, 'fatal: not a git repository')).status).toBe('unknown')
+  expect(verdict('git pull && npm test', OK()).status).toBe('passed')
+})
+
+test('Bash: the shell printing its own exit status is read from the output', () => {
+  const echo = 'npm test; echo "EXIT: $?"'
+  expect(analyze(echo).checks[0].mode).toBe('echo')
+  expect(verdict(echo, OK('1 passed\nEXIT: 0')).status).toBe('passed')
+  expect(verdict(echo, OK('boom\nEXIT: 2'))).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict(echo, OK('no status line')).status).toBe('unknown')
+  // after a pipeline only PIPESTATUS[0] belongs to the check
+  expect(verdict('npm test | tail -3; echo "EXIT: ${PIPESTATUS[0]}"', OK('x\nEXIT: 1'))).toMatchObject({ status: 'failed', exitCode: 1 })
+  expect(verdict('npm test | tail -3; echo "EXIT: $?"', OK('x\nEXIT: 0')).status).toBe('unknown')
+})
+
+test('Bash: a cd that fails does not give a result for the wrong directory', () => {
+  const out = { ...OK(), text: 'bash: cd: nope: No such file or directory\n1 passed' }
+  expect(verdict('cd nope; npm test', out).status).toBe('unknown')
+  expect(verdict('cd nope; npm test', OK()).status).toBe('passed')
+})
+
+// --- PowerShell -----------------------------------------------------------------------------------
+
+test('PowerShell: the tool reports the exit status of the last native program', () => {
+  const ps = { powershell: true }
+  // all of these were measured against the real PowerShell tool
+  expect(verdict('npm run typecheck', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('Set-Location pkg; npm run typecheck', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('Set-Location pkg; npm test', OK(), ps).status).toBe('passed')
+  expect(verdict('npm run typecheck; if ($?) { "ok" } else { "not ok" }', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('npm run typecheck; if ($LASTEXITCODE -ne 0) { Write-Output "failed" }', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('npm run typecheck; Write-Output done', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('npm test; "EXIT: $LASTEXITCODE"', OK('1 passed\nEXIT: 0'), ps).status).toBe('passed')
+  expect(verdict('npm test; "EXIT: $LASTEXITCODE"', FAIL(2, 'EXIT: 2'), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+})
+
+test('PowerShell: a pipeline into cmdlets keeps the native exit status, a pipeline into a program does not', () => {
+  const ps = { powershell: true }
+  expect(verdict('npm run typecheck | Select-Object -Last 1', FAIL(2), ps)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('npm test | Select-Object -Last 1', OK(), ps).status).toBe('passed')
+  expect(verdict('npm test 2>&1 | Out-String', OK(), ps).status).toBe('passed')
+  expect(verdict('npm test | findstr passed', OK(), ps).status).toBe('unknown')
+  expect(verdict('npm test | node filter.js', OK(), ps).status).toBe('unknown')
+})
+
+test('PowerShell: a later native command takes over the exit status', () => {
+  const ps = { powershell: true }
+  expect(verdict('npm test; npm run typecheck', FAIL(2), ps, 0).status).toBe('unknown')
+  expect(verdict('npm test; npm run typecheck', FAIL(2), ps, 1)).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('npm run typecheck; npm test', OK(), ps, 0).status).toBe('unknown')
+  expect(verdict('npm run typecheck; npm test', OK(), ps, 1).status).toBe('passed')
+  expect(verdict('npm test; node other.js', OK(), ps).status).toBe('unknown')
+  expect(verdict('npm test; $x = npm -v', OK(), ps).status).toBe('unknown')
+  expect(verdict('npm test; if ($?) { npm run build }', OK(), ps).status).toBe('unknown')
+  expect(verdict('npm test; Invoke-Expression "npm run build"', OK(), ps).status).toBe('unknown')
+})
+
+test('PowerShell 7: && and || chains', () => {
+  const ps = { powershell: true }
+  expect(verdict('cd pkg && npm test', FAIL(1), ps)).toMatchObject({ status: 'failed', exitCode: 1 })
+  expect(verdict('npm run build && npm test', FAIL(1), ps, 1).status).toBe('unknown')
+  expect(verdict('npm run build && npm test', OK(), ps, 1).status).toBe('passed')
+  expect(verdict('npm test || Write-Host failed', OK(), ps).status).toBe('unknown')
+  expect(kinds('Set-Location pkg && npm test', ps)).toEqual(['test@c:/work/app/pkg'])
+})
+
+test('PowerShell: a Set-Location that failed is not trusted', () => {
+  const out = { ...OK(), text: "Set-Location : Cannot find path 'C:\\nope' because it does not exist.\n1 passed" }
+  expect(verdict('Set-Location nope; npm test', out, { powershell: true }).status).toBe('unknown')
+})
+
+// --- cmd.exe and other wrappers -----------------------------------------------------------------
+
+test('cmd.exe: cmd /c wrappers are looked through', () => {
+  expect(kinds('cmd /c "npm run typecheck"')).toEqual(['typecheck@c:/work/app'])
+  expect(kinds('cmd.exe /d /s /c "cd pkg && npm test"')).toEqual(['test@c:/work/app/pkg'])
+  expect(kinds('cmd /c npm test')).toEqual(['test@c:/work/app'])
+  expect(verdict('cmd /c "npm run typecheck"', FAIL(2))).toMatchObject({ status: 'failed', exitCode: 2 })
+  expect(verdict('cmd /c npm test', OK()).status).toBe('passed')
+  // in cmd a lone & runs the next command regardless, so the last one decides the status
+  expect(verdict('cmd /c "npm test & npm run build"', OK(), {}, 0).status).toBe('unknown')
+  expect(verdict('cmd /c "npm test & npm run build"', OK(), {}, 1).status).toBe('passed')
+  // cmd /c "x" && y is the outer shell's chain, not a wrapper
+  expect(kinds('cmd /c "echo hi" && npm test')).toEqual(['test@c:/work/app'])
+  expect(kinds('bash -c "npm test"')).toEqual(['test@c:/work/app'])
+})
+
+test('a tool Ship Check cannot read is shown as Unknown with the reason', () => {
+  const parsed: any = analyze('npm test')
+  parsed.untrustedTool = 'RunShell'
+  const out = classifyOutcome(parsed, parsed.checks[0], OK())
+  expect(out.status).toBe('unknown')
+  expect(out.reason).toContain('RunShell')
+})
+
+// --- Staleness (unchanged) ---------------------------------------------------------------------
 
 test('files that checks produce, and dependency folders, never count as changes', () => {
   expect(isTrackedPath('src/a.ts', [])).toBe(true)
@@ -157,33 +274,4 @@ test('the ledger survives a JSON round trip, and a Running record settles to Unk
   expect(revived).toEqual(running)
   const settled = settleRunning(revived)
   expect(displayStatus(Object.values(settled.records)[0] as any).status).toBe('Unknown')
-})
-
-function psChecks(cmd: string) {
-  return analyzeCommand(cmd, CWD, [], { powershell: true })
-}
-
-test('PowerShell: the exit-status echo that Claude appends is understood', () => {
-  const parsed = psChecks('npm test; "EXIT: $LASTEXITCODE"')
-  expect(parsed.checks.map((c: any) => c.kind)).toEqual(['test'])
-  expect(parsed.exitEcho).toBe(true)
-  expect(classifyOutcome(parsed, parsed.checks[0], { result: { stdout: '1 passed\nEXIT: 0', stderr: '', interrupted: false } }).status).toBe('passed')
-  expect(classifyOutcome(parsed, parsed.checks[0], { result: { stdout: 'boom\nEXIT: 2', stderr: '', interrupted: false } })).toMatchObject({ status: 'failed', exitCode: 2 })
-  // the status line cannot be read: never Passed
-  expect(classifyOutcome(parsed, parsed.checks[0], { result: { stdout: 'no status here', stderr: '', interrupted: false } }).status).toBe('unknown')
-})
-
-test('PowerShell: a plain command and a pipeline', () => {
-  expect(psChecks('npm run typecheck').checks.map((c: any) => c.kind)).toEqual(['typecheck'])
-  const piped = psChecks('npm test | Select-Object -Last 1')
-  expect(piped.simple).toBe(false)
-  expect(classifyOutcome(piped, piped.checks[0], { result: { stdout: '1 passed', stderr: '', interrupted: false } }).status).toBe('unknown')
-  // other statements after the check are not an exit-status echo
-  const other = psChecks('npm test; Remove-Item x')
-  expect(other.simple).toBe(false)
-})
-
-test('PowerShell: backslash paths are kept and a trailing echo of something else is not trusted', () => {
-  expect(psChecks('cd C:\\work\\app\\pkg && npm test').checks[0].location).toBe('c:/work/app/pkg')
-  expect(psChecks('npm test; "done"').exitEcho).toBe(false)
 })

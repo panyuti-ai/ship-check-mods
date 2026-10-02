@@ -31,24 +31,36 @@ Tests ✓ | Types ↻ Stale | Build ○ Not run
 - **Direct tools**: `tsc` (`--noEmit` counts as a type check), `vitest run`, `jest`, `npx`/`bunx` forms of those.
 - **Your own commands** (see Settings).
 
-Both the **Bash** and the **PowerShell** tool are observed. In PowerShell, the usual `npm test; "EXIT: $LASTEXITCODE"` form is understood: the exit status the shell printed is read from the tool output. Other `;` chains and pipelines are Unknown.
+Ship Check reads the **Bash** tool and the **PowerShell** tool (Windows), and looks through `cmd /c "..."` and `bash -c "..."` wrappers.
 
 The same check in two different project locations, or two workspaces, is recorded separately.
 
 ## How a result is decided
 
-Only the tool result counts. Ship Check reads what the Bash tool returned:
+Only the tool result counts. A check is **Passed** or **Failed** only when the exit status the tool reported can be tied to that check:
 
-- A clean finish with no error flag → **Passed**.
-- An error flag with an `Exit code N` line → **Failed**, and `N` is shown.
-- Anything it cannot tie to the check → **Unknown**, with the reason shown in the panel. That covers:
-  - compound commands: pipes, `;`, `||`, subshells, background jobs (`npm test | tail` reports `tail`'s status, not the test runner's)
-  - an `&&` chain where a failure could have come from another command
-  - background runs and commands that timed out into the background
-  - interrupted commands
-  - watch mode (`--watch`, plain `vitest`), which never finishes by itself
-  - a tool result with no completion information
-- Test counts are **not** shown. Test runners print summaries in too many formats to parse reliably, so Ship Check shows the real output instead of a guessed number.
+- A clean finish → **Passed**.
+- An error with an `Exit code N` line → **Failed**, and `N` is shown.
+- Anything else → **Unknown**, with the reason shown in the panel.
+
+What each tool reports, and so what Ship Check trusts:
+
+| Shell | The tool reports | Trusted forms | Unknown |
+| :-- | :-- | :-- | :-- |
+| **Bash** | The exit status of the last statement | `npm test`, `cd app && npm test`, `cd app; npm test`, a check that is the last command of a `;` list, and `npm test; echo "EXIT: $?"` (the printed status is read) | A pipe (`npm test \| tail`), `\|\|`, background jobs, `;` followed by another command, a failure in an `&&` chain that could belong to an earlier command. After a pipe, `echo "${PIPESTATUS[0]}"` is read. |
+| **PowerShell** | `$LASTEXITCODE`: the exit status of the last native program | `Set-Location x; npm test`, a check followed by cmdlets, strings, `Write-Output`, or `if ($?) {...}` / `if ($LASTEXITCODE -ne 0) {...}` blocks that run no program, a pipeline into cmdlets (`npm test \| Select-Object -Last 1`), PowerShell 7 `&&` chains | A later native program (`npm test; npm run build` — the first check), a pipeline into a program (`npm test \| findstr x`), `||`, an assignment like `$x = npm test` |
+| **cmd.exe** | The exit status of the last command | `cmd /c "npm test"`, `cmd /c "cd app && npm test"`, `cmd /c "a & b"` (the last command) | The same forms as above |
+
+Also **Unknown**:
+
+- background runs and commands that timed out into the background
+- interrupted commands
+- watch mode (`--watch`, plain `vitest`), which never finishes by itself
+- a `cd` or `Set-Location` that failed, because the check may then have run in another directory
+- a tool result with no completion information
+- a command run by **a tool Ship Check does not know**. If a future Claude Code version adds another way to run commands, a check seen there is listed as Unknown with the tool's name, instead of being silently ignored.
+
+Test counts are **not** shown. Test runners print summaries in too many formats to parse reliably, so Ship Check shows the real output instead of a guessed number.
 
 A run that passes extra arguments (for example `npm test -- -t login`) is marked in the panel, because it may not cover everything.
 
@@ -134,6 +146,7 @@ Claude Code caches an installed plugin by version, so a new release must raise `
 
 ## Known limits
 
+- **How each shell reports its exit status was measured, not documented.** The table above comes from real Claude Code 2.1.287 sessions with the Bash and PowerShell tools. PowerShell 7's `&&` and `||` are covered by unit tests only, and the `cmd /c` handling rests on the PowerShell tool reporting the wrapped command's status. If a Claude Code release changes what the tools report, results may become Unknown or, in the worst case, wrong; please open an issue.
 - **Only Claude's own tool calls are observed.** Checks you run in your own terminal are not recorded. A file you change there is still noticed as a change, at the next turn end or prompt.
 - **The scope of "stale" is the whole Git repository.** In a monorepo, an edit in one package marks results from other packages stale too. This is deliberately cautious.
 - **Edits you make are noticed late.** There is no file watcher; changes you make by hand are noticed when a turn ends or you submit a prompt, not the instant you save.
@@ -155,7 +168,7 @@ ship-check-mods/
 │   ├── hooks/
 │   │   ├── hooks.json
 │   │   ├── register.js        # wires events to the board
-│   │   └── lib/               # command parsing, statuses, views (no Claude Code API calls)
+│   │   └── lib/               # command parsing, shell analysis, statuses, views (no Claude Code API calls)
 │   ├── types/index.d.ts       # the state the mod keeps
 │   └── tests/
 ├── README.md

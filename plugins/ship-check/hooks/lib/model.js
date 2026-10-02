@@ -108,32 +108,15 @@ export function parseTrailingCode(text) {
 export function classifyOutcome(parsed, check, outcome) {
   const unknown = (reason) => ({ status: 'unknown', reason, exitCode: null })
 
+  if (parsed.untrustedTool) {
+    return unknown('Ship Check cannot read results from the "' + parsed.untrustedTool + '" tool, so this run is not counted.')
+  }
   if (check.watch || parsed.hasWatch) return unknown('Watch mode does not finish on its own, so no result was recorded.')
+  if (check.mode === 'none') return unknown(check.reason || 'The exit status cannot be tied to this check.')
   if (!outcome || typeof outcome !== 'object') return unknown('The tool returned no result for this command.')
 
   // A command that exits non-zero comes back as isError with the text 'Exit code N ...' and a
   // string result; only a successful run carries the structured record.
-  if (parsed.exitEcho) return classifyExitEcho(parsed, check, outcome)
-  if (outcome.isError === true) return classifyFailure(parsed, check, outcome)
-  if (!outcome.result || typeof outcome.result !== 'object') return unknown('The tool returned no result for this command.')
-  const r = outcome.result
-  if (r.backgroundTaskId || r.backgroundedByUser || r.backgroundedByTurnAbort || r.backgroundedToDeliverMessage || r.timedOutAfterMs) {
-    return unknown('The command moved to the background before it finished.')
-  }
-  if (r.interrupted === true) return unknown('The command was interrupted before it finished.')
-  if (typeof r.interrupted !== 'boolean') return unknown('The tool did not report whether the command finished.')
-  if (!parsed.simple) return unknown('This compound command does not show which part decided the exit status.')
-
-  if (typeof r.returnCodeInterpretation === 'string' && r.returnCodeInterpretation) {
-    return unknown('The command exited with a status that the tool did not treat as a plain success.')
-  }
-  // `&&` chains only reach the end when every command succeeded, so the exit status is 0.
-  return { status: 'passed', reason: null, exitCode: 0 }
-}
-
-// "npm test; \"EXIT: $LASTEXITCODE\"": the shell itself printed the check's exit status.
-function classifyExitEcho(parsed, check, outcome) {
-  const unknown = (reason) => ({ status: 'unknown', reason, exitCode: null })
   const r = outcome.result && typeof outcome.result === 'object' ? outcome.result : null
   if (r) {
     if (r.backgroundTaskId || r.backgroundedByUser || r.backgroundedByTurnAbort || r.backgroundedToDeliverMessage || r.timedOutAfterMs) {
@@ -141,23 +124,44 @@ function classifyExitEcho(parsed, check, outcome) {
     }
     if (r.interrupted === true) return unknown('The command was interrupted before it finished.')
   }
-  if (!parsed.simple) return unknown('This compound command does not show which part decided the exit status.')
-  const last = check.index === parsed.total - 1
-  if (parsed.checks.length !== 1 || !last) return unknown('The printed exit status may belong to another command in this chain.')
+
+  if (check.mode === 'echo') return classifyEcho(outcome, r)
+  if (outcome.isError === true) return classifyFailure(check, outcome)
+
+  if (!r) return unknown('The tool returned no result for this command.')
+  if (typeof r.interrupted !== 'boolean') return unknown('The tool did not report whether the command finished.')
+  if (typeof r.returnCodeInterpretation === 'string' && r.returnCodeInterpretation) {
+    return unknown('The command exited with a status that the tool did not treat as a plain success.')
+  }
+  if (directoryChangeFailed(check, outcome)) return unknown(DIRECTORY_REASON)
+  // A clean finish: every command in an && chain succeeded, so the exit status was 0.
+  return { status: 'passed', reason: null, exitCode: 0 }
+}
+
+const DIRECTORY_REASON = 'The directory change may have failed, so the check may have run somewhere else.'
+
+// If `cd` or Set-Location failed, the check ran in the old directory: do not trust the location.
+function directoryChangeFailed(check, outcome) {
+  if (!check.cdUsed) return false
+  const text = String(outcome.text || (outcome.result && outcome.result.stderr) || '')
+  return /No such file or directory|Cannot find path|cannot find the path|cannot find the file|does not exist|The system cannot find/i.test(text)
+}
+
+// The shell printed the status itself: `npm test; echo "EXIT: $?"`.
+function classifyEcho(outcome, r) {
+  const unknown = (reason) => ({ status: 'unknown', reason, exitCode: null })
   const code = parseTrailingCode(r ? r.stdout : outcome.text)
   if (code === null) return unknown('The exit status line could not be read from the output.')
   return code === 0 ? { status: 'passed', reason: null, exitCode: 0 } : { status: 'failed', reason: null, exitCode: code }
 }
 
-function classifyFailure(parsed, check, outcome) {
+function classifyFailure(check, outcome) {
   const unknown = (reason) => ({ status: 'unknown', reason, exitCode: null })
+  if (check.mode === 'success-only') return unknown(check.reason || 'Another command in this chain may have failed, so the result is not tied to this check.')
   const exitCode = parseExitCode(outcome.text)
-  if (!parsed.simple) return unknown('This compound command does not show which part decided the exit status.')
   if (exitCode === null) return unknown('The tool reported an error but no exit status.')
-  const last = check.index === parsed.total - 1
-  const onlyCheck = parsed.checks.length === 1
-  if (onlyCheck && last) return { status: 'failed', reason: null, exitCode }
-  return unknown('Another command in this chain may have failed, so the result is not tied to this check.')
+  if (directoryChangeFailed(check, outcome)) return unknown(DIRECTORY_REASON)
+  return { status: 'failed', reason: null, exitCode }
 }
 
 // --- Display -------------------------------------------------------------------------------------

@@ -9,7 +9,7 @@
       "name": "ship-check",
       "source": "./plugins/ship-check",
       "description": "A development verification board: shows which tests, builds and type checks really ran, how they ended, and whether the result still matches your code.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "category": "development",
       "keywords": ["mod", "tests", "build", "typecheck", "verification"]
     }

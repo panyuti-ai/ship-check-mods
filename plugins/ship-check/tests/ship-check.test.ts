@@ -213,11 +213,41 @@ test('the PowerShell tool is observed like Bash, including the exit-status echo'
   let n = 0
   on('tool.call', () => {
     n += 1
-    return n === 1 ? bash({ stdout: '1 passed\nEXIT: 0' }) : bash({ stdout: 'boom\nEXIT: 2' })
+    return n === 1 ? bash({ stdout: '1 passed\nEXIT: 0' }) : failed(2, 'boom\nEXIT: 2')
   })
   await $.tool.call({ tool: 'PowerShell', command: 'npm test; "EXIT: $LASTEXITCODE"' })
   await $.tool.call({ tool: 'PowerShell', command: 'npm run typecheck; "EXIT: $LASTEXITCODE"' })
   const strip = await stripText($)
   expect(strip).toContain('Tests ✓')
   expect(strip).toContain('Types ✗ Failed')
+})
+
+test('PowerShell: Set-Location with ;, if blocks and pipelines into cmdlets all give real results', async ($, on) => {
+  const sim: Sim = { head: 'a1', dirty: {} }
+  world(on, sim)
+  const results = [bash(), failed(2), bash()]
+  let n = 0
+  on('tool.call', () => results[n++])
+  await $.tool.call({ tool: 'PowerShell', command: 'Set-Location pkg; npm test' })
+  await $.tool.call({ tool: 'PowerShell', command: 'npm run typecheck; if ($?) { "ok" } else { "not ok" }' })
+  await $.tool.call({ tool: 'PowerShell', command: 'npm run build | Select-Object -Last 1' })
+  const strip = await stripText($)
+  expect(strip).toContain('Tests ✓')
+  expect(strip).toContain('Types ✗ Failed')
+  expect(strip).toContain('Build ✓')
+  // the Set-Location run is a different location from the other two
+  const pane = (await paneTexts($)).join('\n')
+  expect(pane).toContain('./pkg')
+})
+
+test('a command run by a tool Ship Check does not know is shown as Unknown, not ignored', async ($, on) => {
+  const sim: Sim = { head: 'a1', dirty: {} }
+  world(on, sim)
+  on('tool.call', () => ({ result: 'started in another terminal' }))
+  await $.tool.call({ tool: 'FutureShell', command: 'npm test' })
+  const strip = await stripText($)
+  expect(strip).toContain('Tests ? Unknown')
+  const pane = (await paneTexts($)).join('\n')
+  expect(pane).toContain('FutureShell')
+  expect(pane).toContain('cannot read results from')
 })

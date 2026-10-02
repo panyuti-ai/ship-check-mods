@@ -1,4 +1,4 @@
-// Recognizes test, build and type-check commands in a Bash command line.
+// Recognizes test, build and type-check commands. analyze.js builds on this to read whole command lines.
 // Pure functions: no Claude Code API is used here.
 
 import { resolveDir } from './paths.js'
@@ -243,12 +243,17 @@ function interpretPackageManager(pm, rest) {
 }
 
 // Interprets one `&&` segment: a directory change, a check, or something else (null).
-export function interpretSegment(rawTokens, customChecks) {
+export function interpretSegment(rawTokens, customChecks, ps = false) {
   const tokens = cleanTokens(rawTokens)
   if (tokens.length === 0) return null
 
-  if (/^(cd|chdir|sl|set-location)$/i.test(tokens[0])) return { type: 'cd', dir: tokens[1] && !tokens[1].startsWith('-') ? tokens[1] : tokens[2] || null }
-  if (tokens[0] === 'pushd' || tokens[0] === 'popd') return { type: 'unsupported-cd' }
+  if (/^(cd|chdir|sl|set-location)$/i.test(tokens[0]) || (ps && /^(push-location|pushd)$/i.test(tokens[0]))) {
+    // Drop flags: PowerShell's -Path style, and cmd's `cd /d dir`.
+    const args = tokens.slice(1).filter((t) => !/^\/[a-z]$/i.test(t) && !/^-(path|literalpath|passthru|stackname)$/i.test(t) && !(t.startsWith('-') && t.length > 1))
+    return { type: 'cd', dir: args[0] || null }
+  }
+  if (ps && /^(pop-location|popd)$/i.test(tokens[0])) return { type: 'cd', dir: null }
+  if (!ps && (tokens[0] === 'pushd' || tokens[0] === 'popd')) return { type: 'unsupported-cd' }
 
   const text = tokens.join(' ')
   for (const custom of customChecks || []) {
@@ -282,82 +287,6 @@ export function interpretSegment(rawTokens, customChecks) {
   const found = interpretPackageManager(head, rest)
   if (!found) return null
   return { type: 'check', ...found, text }
-}
-
-// A PowerShell statement that only prints $LASTEXITCODE, as in: npm test; "EXIT: $LASTEXITCODE"
-export function isExitEcho(stmt) {
-  const s = stmt.trim()
-  if (!/\$LASTEXITCODE/.test(s)) return false
-  return /^(["'].*["']|(write-host|write-output|echo)\b.*|\$LASTEXITCODE)$/i.test(s)
-}
-
-// Splits on top-level semicolons (PowerShell statements), ignoring those inside quotes.
-function splitStatements(cmd) {
-  const out = []
-  let cur = ''
-  let quote = null
-  for (let i = 0; i < cmd.length; i++) {
-    const ch = cmd[i]
-    if (quote) {
-      if (ch === quote) quote = null
-      cur += ch
-      continue
-    }
-    if (ch === "'" || ch === '"') quote = ch
-    if (ch === ';') {
-      out.push(cur)
-      cur = ''
-      continue
-    }
-    cur += ch
-  }
-  out.push(cur)
-  return out.filter((s) => s.trim() !== '')
-}
-
-// Parses a whole command line. `baseDir` is the session's working directory.
-export function analyzeCommand(cmd, baseDir, customChecks, options = {}) {
-  const ps = options.powershell === true
-  let exitEcho = false
-  if (ps) {
-    const statements = splitStatements(cmd)
-    if (statements.length > 1 && statements.slice(1).every(isExitEcho) && !isExitEcho(statements[0])) {
-      cmd = statements[0]
-      exitEcho = true
-    }
-  }
-  const { segments, simple } = tokenizeChain(cmd, ps)
-  const result = { simple, total: segments.length, checks: [], unresolvedDir: false, hasWatch: false, exitEcho }
-  let dir = baseDir || null
-  segments.forEach((tokens, index) => {
-    const seg = interpretSegment(tokens, customChecks)
-    if (!seg) return
-    if (seg.type === 'unsupported-cd') {
-      result.simple = false
-      return
-    }
-    if (seg.type === 'cd') {
-      dir = seg.dir ? resolveDir(dir, seg.dir) : null
-      return
-    }
-    let location = dir
-    if (seg.cwdArg) location = resolveDir(dir, seg.cwdArg)
-    if (!location) {
-      result.unresolvedDir = true
-      return
-    }
-    if (seg.watch) result.hasWatch = true
-    result.checks.push({
-      index,
-      kind: seg.kind,
-      location,
-      scope: seg.scope || '',
-      watch: !!seg.watch,
-      filtered: !!seg.filtered,
-      command: seg.text,
-    })
-  })
-  return result
 }
 
 // Parses user config lines such as `lint=npm run lint` into custom checks.
