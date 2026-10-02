@@ -10,7 +10,7 @@ Tests ✓ | Types ↻ Stale | Build ○ Not run
 
 ## Features
 
-- **A status line above the prompt.** One short line per project: `Tests ✓ | Types ↻ Stale | Build ○ Not run`. It updates quietly and never pops up a notification.
+- **A status line above the prompt.** One short line per project: `Tests ✓ | Types ↻ Stale | Build ○ Not run`. When the same kind of check has results in several folders (for example the tests of two packages), the line shows the worst one, in the order Failed, Stale, Unknown, Running, Passed, so a failure is never hidden behind a newer pass elsewhere. Open the panel to see every folder. It updates quietly and never pops up a notification.
 - **A detailed panel.** Press **Details** on the status line, or run `/ship-check`, to open **Ship Check**. For each check it shows the result, the time, the command, the project location, and why a result is stale.
 - **View output.** Each row has a **View output** button that shows a length-limited tail of the real tool output.
 - **Prepare checks.** Puts a request to re-run stale, failed, unknown or not-yet-run checks into the prompt box. Nothing is sent until you press Enter.

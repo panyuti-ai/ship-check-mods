@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parseCustomChecks, tokenizeChain } from '../hooks/lib/commands.js'
 import { analyzeCommand } from '../hooks/lib/analyze.js'
-import { summaryLine, classifyOutcome, applyEdit, beginRecord, finishRecord, emptyLedger, isTrackedPath, displayStatus, staleReasonFor, settleRunning } from '../hooks/lib/model.js'
+import { kindSummary, summaryLine, classifyOutcome, applyEdit, beginRecord, finishRecord, emptyLedger, isTrackedPath, displayStatus, staleReasonFor, settleRunning } from '../hooks/lib/model.js'
 import { normalizePath, resolveDir, displayLocation } from '../hooks/lib/paths.js'
 
 const CWD = 'c:/work/app'
@@ -288,4 +288,35 @@ test('checks that ran in one command say the time is for the whole command', () 
   expect(summaryLine({ ...rec, together: 1 })).not.toContain('whole command')
   // a record saved before this field existed
   expect(summaryLine({ startedAt: 1000, endedAt: 3300, exitCode: 0 })).not.toContain('whole command')
+})
+
+// A finished check at one location, run at `when`.
+function ran(ledger: any, location: string, kind: string, status: 'passed' | 'failed', when: number) {
+  const check = { kind, location, scope: '', command: 'npm test', filtered: false }
+  let next = beginRecord(ledger, check, { hash: 'a', count: 1, partial: false }, CWD, when)
+  next = finishRecord(next, location + '|' + kind + '|', when, { status, reason: null, exitCode: status === 'passed' ? 0 : 1, summary: '', endSig: { hash: 'a', count: 1, partial: false }, now: when + 100 })
+  return next
+}
+
+test('the status line shows the worst result among the locations, not the newest', () => {
+  let ledger: any = emptyLedger()
+  ledger = ran(ledger, CWD + '/packages/api', 'test', 'failed', 1000)
+  ledger = ran(ledger, CWD + '/packages/web', 'test', 'passed', 2000) // newer, and green
+  const tests = kindSummary(ledger, CWD, []).find((s: any) => s.kind === 'test') as any
+  expect(tests.status).toBe('Failed')
+  expect(tests.count).toBe(2)
+  // a different kind that is only green stays green
+  ledger = ran(ledger, CWD + '/packages/web', 'build', 'passed', 3000)
+  expect((kindSummary(ledger, CWD, []).find((s: any) => s.kind === 'build') as any).status).toBe('Passed')
+})
+
+test('a stale result outranks a pass, and a failure outranks a stale result', () => {
+  let ledger: any = emptyLedger()
+  ledger = ran(ledger, CWD, 'test', 'passed', 1000)
+  ledger = ran(ledger, CWD + '/packages/web', 'test', 'passed', 2000)
+  ledger = applyEdit(ledger, CWD + '/packages/web/src/a.ts', 3000, [])
+  const stale = kindSummary(ledger, CWD, []).find((s: any) => s.kind === 'test') as any
+  expect(stale.status).toBe('Stale')
+  ledger = ran(ledger, CWD + '/packages/api', 'test', 'failed', 4000)
+  expect((kindSummary(ledger, CWD, []).find((s: any) => s.kind === 'test') as any).status).toBe('Failed')
 })

@@ -204,14 +204,22 @@ export function relevantToCwd(record, cwd) {
 }
 
 // One entry per kind for the status line: the most recent record near `cwd`.
+// Which status the status line shows when a kind has results in several locations, worst first.
+const SEVERITY = [STATUS.FAILED, STATUS.STALE, STATUS.UNKNOWN, STATUS.RUNNING, STATUS.PASSED]
+
 export function kindSummary(ledger, cwd, customKinds) {
   const kinds = [...DEFAULT_KINDS]
   for (const k of customKinds || []) if (!kinds.includes(k)) kinds.push(k)
   const records = Object.values(ledger.records).filter((r) => relevantToCwd(r, cwd))
   return kinds.map((kind) => {
-    const mine = records.filter((r) => r.kind === kind).sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
-    const record = mine[0] || null
-    return { kind, label: kindLabel(kind), record, ...displayStatus(record) }
+    // Several locations can hold the same kind of check. Show the worst of them, so a failure in
+    // one package is not hidden behind a newer pass in another. Ties go to the most recent run.
+    const mine = records
+      .filter((r) => r.kind === kind)
+      .map((record) => ({ record, shown: displayStatus(record) }))
+      .sort((a, b) => SEVERITY.indexOf(a.shown.status) - SEVERITY.indexOf(b.shown.status) || (b.record.startedAt || 0) - (a.record.startedAt || 0))
+    const top = mine[0]
+    return { kind, label: kindLabel(kind), record: top ? top.record : null, count: mine.length, ...(top ? top.shown : displayStatus(null)) }
   })
 }
 
