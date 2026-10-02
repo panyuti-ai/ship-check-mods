@@ -85,9 +85,9 @@ The stale reason names the kind of change: source files, configuration files (`t
 
 ## Requirements
 
-- **Claude Code 2.1.287 or later.** Mods are not supported on older versions. In the desktop app, update the app to the latest version; in the terminal, check with `claude --version`.
+- **A Claude Code that supports mods.** Anthropic's documentation says mods need Claude Code 2.1.287 or later. In the terminal, check with `claude --version`. The desktop app bundles its own copy of Claude Code; Ship Check also loaded in a Windows desktop app whose built-in version was 2.1.286, so if it does not appear, update the app first.
 - Git is optional but recommended; it makes change detection faster and more precise.
-- The terminal and the Desktop app can load mods, as long as the Claude Code version inside them is 2.1.287 or later (the Desktop app bundles its own copy).
+- The terminal and the **Code** tab of the desktop app can load mods. Other places (the VS Code chat panel, `claude -p`, cloud sessions) run a mod's hooks but do not draw its interface.
 
 ## Settings
 
@@ -128,13 +128,15 @@ cd plugins/ship-check && claude plugin test
 
 ### In the Claude desktop app (no terminal)
 
-You need a Claude desktop app whose built-in Claude Code is **2.1.287 or later**, so update the app to the latest version first.
+Use a recent Claude desktop app. Ship Check was tested in the **Code** tab of the Windows app. If it does not show up after the steps below, update the app and try again.
 
 1. Open **Settings** and choose **Plugins** (under *Customize*).
 2. Click **Add**, then **Add from a repository**.
 3. Enter `panyuti-ai/ship-check-mods` and confirm.
-4. Open the **Discover** tab, find **Ship Check**, and install it. Choose who it is for (just you, this project, or this repository only) when asked.
-5. Start a new session in the **Code** tab. After Claude runs a test, build, or type check, the status line appears above the prompt. Type `/ship-check` to open the panel.
+4. Open the **Discover** tab, find **Ship Check**, and install it. It then appears under **Yours** with its switch turned on.
+5. **Wait a few minutes**, then open a **new session** in the **Code** tab. A session that was already open when you installed does not have it, and a new session can still miss it for the first minutes after the install.
+6. Type `/ship-check` and press Enter. The **Ship Check** panel opens on the right. Below the prompt you may also see an orange line, `/ship-check isn't a command here.` It is only a notice from the app: the panel still opens.
+7. Ask Claude to run your tests, a type check, or a build. The status line appears above the prompt, and the panel fills in.
 
 To turn it off or remove it later, use **Settings → Plugins → Yours**.
 
