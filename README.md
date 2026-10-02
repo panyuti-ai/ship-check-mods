@@ -1,0 +1,167 @@
+# ship-check-mods
+
+A Claude Code marketplace with one mod: **Ship Check**, a development verification board.
+
+When Claude changes your code, Ship Check shows which checks really ran, how they ended, and whether each result still matches the code on disk. It never takes Claude's word for it. A check is *Passed* only when the tool that ran it said so.
+
+```
+Tests ✓ | Types ↻ Stale | Build ○ Not run
+```
+
+## Features
+
+- **A status line above the prompt.** One short line per project: `Tests ✓ | Types ↻ Stale | Build ○ Not run`. It updates quietly and never pops up a notification.
+- **A detailed panel.** Run `/ship-check` to open **Ship Check**. For each check it shows the result, the time, the command, the project location, and why a result is stale.
+- **View output.** Each row has a **View output** button that shows a length-limited tail of the real tool output.
+- **Prepare checks.** Puts a request to re-run stale, failed, unknown or not-yet-run checks into the prompt box. Nothing is sent until you press Enter.
+- **Honest statuses.** Every check is in exactly one state:
+
+| Status | Meaning |
+| :-- | :-- |
+| Not run | No result has been recorded for this project yet. |
+| Running | The check has started and has not reported back. |
+| Passed | The tool reported a clean finish. |
+| Failed | The tool reported a non-zero exit status. |
+| Stale | The check finished, but files changed afterwards (or while it ran). |
+| Unknown | The check ran, but the tool gave no reliable way to tell how it ended. |
+
+## What is recognized
+
+- **npm, pnpm, yarn and bun**: `test`, `build`, and type-check scripts (`typecheck`, `type-check`, `check-types`, `tsc`), including `npm run <script>`, `pnpm -C dir`, `yarn workspace <name> <script>`, `npm --prefix dir`, `--workspace` / `--filter`, and a leading `cd dir &&`.
+- **Direct tools**: `tsc` (`--noEmit` counts as a type check), `vitest run`, `jest`, `npx`/`bunx` forms of those.
+- **Your own commands** (see Settings).
+
+Both the **Bash** and the **PowerShell** tool are observed. In PowerShell, the usual `npm test; "EXIT: $LASTEXITCODE"` form is understood: the exit status the shell printed is read from the tool output. Other `;` chains and pipelines are Unknown.
+
+The same check in two different project locations, or two workspaces, is recorded separately.
+
+## How a result is decided
+
+Only the tool result counts. Ship Check reads what the Bash tool returned:
+
+- A clean finish with no error flag → **Passed**.
+- An error flag with an `Exit code N` line → **Failed**, and `N` is shown.
+- Anything it cannot tie to the check → **Unknown**, with the reason shown in the panel. That covers:
+  - compound commands: pipes, `;`, `||`, subshells, background jobs (`npm test | tail` reports `tail`'s status, not the test runner's)
+  - an `&&` chain where a failure could have come from another command
+  - background runs and commands that timed out into the background
+  - interrupted commands
+  - watch mode (`--watch`, plain `vitest`), which never finishes by itself
+  - a tool result with no completion information
+- Test counts are **not** shown. Test runners print summaries in too many formats to parse reliably, so Ship Check shows the real output instead of a guessed number.
+
+A run that passes extra arguments (for example `npm test -- -t login`) is marked in the panel, because it may not cover everything.
+
+## When a result goes stale
+
+A finished result becomes **Stale** when any tracked file under the project changes afterwards. A change that happens while the check is running also makes the result stale, because the result may not match the latest code.
+
+Ship Check notices:
+
+| Change | How it is noticed |
+| :-- | :-- |
+| Claude's Edit, Write, MultiEdit and NotebookEdit tools | The tool call, immediately. |
+| Files changed by a Bash command | The file list the Bash tool reports. If the tool cannot report one, every finished result in that project is marked stale to be safe. |
+| Edits you make yourself | A fingerprint comparison when a turn ends, and when you submit a prompt. |
+| Git commit or branch changes | The fingerprint includes `HEAD`. |
+
+The fingerprint is `HEAD` plus the modified and untracked files that Git reports, with each file's size and modified time. Outside a Git repository it walks the folder with caps (depth 5, 1,500 entries); if a cap is hit the fingerprint is marked partial and is never used to claim that something changed.
+
+**Never counted:** `node_modules`, `.git`, `dist`, `build`, `out`, `.next`, `.nuxt`, `.svelte-kit`, `.turbo`, `.cache`, `coverage`, `.nyc_output`, `target`, `__pycache__`, `.venv`, `.claude`, `*.log`, `*.tsbuildinfo`, and similar generated output.
+
+The stale reason names the kind of change: source files, configuration files (`tsconfig*`, `*.config.*`, `.env*`), or dependency files (`package.json`, lockfiles).
+
+## Requirements
+
+- **Claude Code 2.1.287 or later.** Mods are not supported on older versions. Check with `claude --version`.
+- Git is optional but recommended; it makes change detection faster and more precise.
+- The terminal and the Desktop app can load mods, as long as the Claude Code version inside them is 2.1.287 or later (the Desktop app bundles its own copy).
+
+## Settings
+
+Open `/plugin`, select **ship-check**, and choose **Configure**, or edit `pluginConfigs` in your settings file.
+
+- **Extra checks**: your own commands, one per entry, written as `kind=command`. The kind becomes the label in the status line.
+  ```
+  lint=npm run lint
+  e2e=npx playwright test
+  ```
+- **Ignored paths**: folders or files whose changes should not make a result stale, such as `generated`.
+
+Both are optional.
+
+## Troubleshooting
+
+If the status line does not appear, start Claude Code with `SHIP_CHECK_DEBUG` set to a file path (for example `$env:SHIP_CHECK_DEBUG = "C:\temp\ship.json"` in PowerShell). Ship Check then writes the size the band was given and the number of recorded checks to that file. The status line appears once at least one check has run.
+
+## Try it locally
+
+From a clone of this repository:
+
+```bash
+claude --plugin-dir ./plugins/ship-check
+```
+
+Then ask Claude to run your tests, and open the panel with `/ship-check`. Edits to the mod reload while the session runs.
+
+Run the checks for the mod itself:
+
+```bash
+claude plugin validate .
+claude plugin validate ./plugins/ship-check --strict
+cd plugins/ship-check && claude plugin test
+```
+
+## Install
+
+Replace `<GitHub account>` with the account that publishes this repository.
+
+```
+/plugin marketplace add <GitHub account>/ship-check-mods
+/plugin install ship-check@ship-check-mods
+/reload-plugins
+```
+
+## Update
+
+```
+/plugin marketplace update ship-check-mods
+/plugin update ship-check@ship-check-mods
+/reload-plugins
+```
+
+Claude Code caches an installed plugin by version, so a new release must raise `version` in both `plugins/ship-check/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`.
+
+## Known limits
+
+- **Only Claude's own tool calls are observed.** Checks you run in your own terminal are not recorded. A file you change there is still noticed as a change, at the next turn end or prompt.
+- **The scope of "stale" is the whole Git repository.** In a monorepo, an edit in one package marks results from other packages stale too. This is deliberately cautious.
+- **Edits you make are noticed late.** There is no file watcher; changes you make by hand are noticed when a turn ends or you submit a prompt, not the instant you save.
+- **Same-size, same-second edits can be missed by the fingerprint.** Claude's own edits are tracked by tool call, so this only affects hand edits made within the clock resolution of a file system.
+- **A check that writes tracked files makes itself stale.** For example a test that rewrites a snapshot. Add the folder to *Ignored paths*.
+- **Filtered runs overwrite the full run.** The latest run of a check in a location is the one shown.
+- **`bashEditDiff` is an internal field.** Ship Check uses the file list the Bash tool reports when it is there and falls back to the fingerprint when it is not. If a future Claude Code version removes it, stale detection still works, just a little later.
+- **Mods are early access.** The API can change between Claude Code releases. This version was built and tested against Claude Code 2.1.287.
+- **State lives for the session.** Results survive a hot reload but reset on `/clear`, `/resume` and `/branch`.
+- **Locations.** `cd` to a path that uses `~`, a variable, or `-` cannot be resolved, so that check is not recorded.
+
+## Layout
+
+```
+ship-check-mods/
+├── .claude-plugin/marketplace.json
+├── plugins/ship-check/
+│   ├── .claude-plugin/plugin.json
+│   ├── hooks/
+│   │   ├── hooks.json
+│   │   ├── register.js        # wires events to the board
+│   │   └── lib/               # command parsing, statuses, views (no Claude Code API calls)
+│   ├── types/index.d.ts       # the state the mod keeps
+│   └── tests/
+├── README.md
+└── LICENSE
+```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

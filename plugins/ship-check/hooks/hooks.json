@@ -1,0 +1,4 @@
+{
+  "description": "The Ship Check hooks module",
+  "modules": ["./register.js"]
+}
