@@ -126,15 +126,15 @@ cd plugins/ship-check && claude plugin test
 
 ## Install
 
-Replace `<GitHub account>` with the account that publishes this repository.
-
 ```
-/plugin marketplace add <GitHub account>/ship-check-mods
+/plugin marketplace add panyuti-ai/ship-check-mods
 /plugin install ship-check@ship-check-mods
 /reload-plugins
 ```
 
 ## Update
+
+`marketplace update` takes the marketplace's **name** (`ship-check-mods`), not the GitHub path, so these commands are the same for everyone:
 
 ```
 /plugin marketplace update ship-check-mods
