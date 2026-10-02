@@ -23,6 +23,7 @@ declare module 'claude-code' {
     scope: string
     root: string
     command: string
+    together: number
     filtered: boolean
     status: 'running' | 'passed' | 'failed' | 'unknown'
     startedAt: number

@@ -237,7 +237,7 @@ async function beginTool($, e, custom, extra) {
   })
   await update($, ledgerAtom, (value) => {
     let next = value
-    for (const c of ctx.checks) next = beginRecord(next, c.check, roots.get(c.root), c.root, c.startedAt)
+    for (const c of ctx.checks) next = beginRecord(next, { ...c.check, together: ctx.checks.length }, roots.get(c.root), c.root, c.startedAt)
     return next
   })
   ctx.roots = roots

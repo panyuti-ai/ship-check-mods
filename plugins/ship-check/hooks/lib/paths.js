@@ -55,7 +55,7 @@ export function relativeTo(child, parent) {
 // A short spelling of a project location for the UI.
 export function displayLocation(location, cwd) {
   if (!location) return 'unknown location'
-  if (cwd && location === cwd) return '.'
+  if (cwd && location === cwd) return location.split('/').pop() || location
   if (cwd && isUnder(location, cwd)) return './' + relativeTo(location, cwd)
   return location
 }

@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 import { parseCustomChecks, tokenizeChain } from '../hooks/lib/commands.js'
 import { analyzeCommand } from '../hooks/lib/analyze.js'
-import { classifyOutcome, applyEdit, beginRecord, finishRecord, emptyLedger, isTrackedPath, displayStatus, staleReasonFor, settleRunning } from '../hooks/lib/model.js'
-import { normalizePath, resolveDir } from '../hooks/lib/paths.js'
+import { summaryLine, classifyOutcome, applyEdit, beginRecord, finishRecord, emptyLedger, isTrackedPath, displayStatus, staleReasonFor, settleRunning } from '../hooks/lib/model.js'
+import { normalizePath, resolveDir, displayLocation } from '../hooks/lib/paths.js'
 
 const CWD = 'c:/work/app'
 
@@ -274,4 +274,18 @@ test('the ledger survives a JSON round trip, and a Running record settles to Unk
   expect(revived).toEqual(running)
   const settled = settleRunning(revived)
   expect(displayStatus(Object.values(settled.records)[0] as any).status).toBe('Unknown')
+})
+
+test('the project folder is shown by name, sub-folders relative to it', () => {
+  expect(displayLocation('c:/work/app', 'c:/work/app')).toBe('app')
+  expect(displayLocation('c:/work/app/packages/a', 'c:/work/app')).toBe('./packages/a')
+  expect(displayLocation('c:/elsewhere/x', 'c:/work/app')).toBe('c:/elsewhere/x')
+})
+
+test('checks that ran in one command say the time is for the whole command', () => {
+  const rec = { startedAt: 1000, endedAt: 3300, exitCode: 0, together: 3 }
+  expect(summaryLine(rec)).toContain('2.3s for the whole command')
+  expect(summaryLine({ ...rec, together: 1 })).not.toContain('whole command')
+  // a record saved before this field existed
+  expect(summaryLine({ startedAt: 1000, endedAt: 3300, exitCode: 0 })).not.toContain('whole command')
 })

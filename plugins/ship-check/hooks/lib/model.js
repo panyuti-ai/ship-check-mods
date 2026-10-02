@@ -240,7 +240,10 @@ export function summaryLine(record) {
   const bits = []
   if (record.endedAt) bits.push(formatClock(record.endedAt))
   else if (record.startedAt) bits.push('started ' + formatClock(record.startedAt))
-  if (record.endedAt && record.startedAt) bits.push(formatDuration(record.endedAt - record.startedAt))
+  if (record.endedAt && record.startedAt) {
+    const took = formatDuration(record.endedAt - record.startedAt)
+    bits.push(record.together > 1 ? took + ' for the whole command' : took)
+  }
   if (typeof record.exitCode === 'number') bits.push('exit ' + record.exitCode)
   return bits.join(' · ')
 }
@@ -269,6 +272,7 @@ export function beginRecord(ledger, check, startSig, root, now) {
     scope: check.scope,
     root,
     command: check.command,
+    together: check.together || 1,
     filtered: check.filtered,
     status: 'running',
     startedAt: now,
